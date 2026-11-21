@@ -35,6 +35,21 @@ until the 19th; old links work.
 tools live only in this repo. Other domains using the name, such as cleanyourtv.com, are not run by
 this project ([#1004](https://github.com/Gathin23/cleanyourtv/issues/1004)).
 
+## Offline launcher in this fork
+
+The Home screen has a compact clock and date, a static navy backdrop and a poster for the focused favourite. The default dock order is **YouTube, Netflix, Prime Video and JioHotstar**. Installed apps appear in the labelled grid below. The Fire TV shortcut follows a visible HDMI input by name and respects hidden inputs and excluded ports.
+
+Reduced motion is enabled by default. The launcher uses installed app artwork, sizes raster banners for the display and shares bitmap memory between Home instances. When it cannot safely determine a banner’s dimensions, it uses the app icon. Themes can override the background colour, dock and motion settings. See the [theme reference](themes/README.md).
+
+To build and check the launcher on Windows with JDK 17 and Android SDK 34:
+
+```powershell
+cd launcher
+.\gradlew.bat testReleaseUnitTest lintRelease assembleRelease
+```
+
+The release APK must stay below 491,520 bytes. This fork retains the launcher package and version code for rollback. Updating an existing installation requires the same signing key. Keep signing keys, device backups, screenshots and local setup notes private.
+
 ## How it works
 
 Android TVs have the same debug bridge as Android phones. Switch on USB debugging in the TV's

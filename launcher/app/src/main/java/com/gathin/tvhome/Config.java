@@ -130,6 +130,7 @@ final class Config {
     final boolean appLibrarySelection;
     /** Background colour behind everything, #RRGGBB; black unless a theme says otherwise. */
     final int backgroundColor;
+    final boolean hasBackgroundOverride;
     /** Time-of-day backdrop, 0 to 100 (config.xml, sky_intensity); 0 keeps the plain background. */
     final int skyIntensity;
     /** Remote keycodes that open Settings through HomeKeyService (config.xml, settings_key_keycodes). */
@@ -271,7 +272,8 @@ final class Config {
         this.showStats = showStats;
         this.appLibrary = appLibrary;
         this.appLibrarySelection = appLibrarySelection;
-        this.backgroundColor = backgroundColor;
+        this.hasBackgroundOverride = backgroundColor != Color.TRANSPARENT;
+        this.backgroundColor = hasBackgroundOverride ? backgroundColor : Color.BLACK;
         this.skyIntensity = skyIntensity;
         this.settingsKeycodes = settingsKeycodes;
         this.settingsKeyPanel = settingsKeyPanel;
@@ -362,7 +364,7 @@ final class Config {
         boolean showStats = res.getBoolean(R.bool.show_stats);
         boolean library = res.getBoolean(R.bool.app_library);
         boolean librarySelection = res.getBoolean(R.bool.app_library_selection);
-        int background = 0xFF000000;
+        int background = Color.TRANSPARENT;
         int skyIntensity = res.getInteger(R.integer.sky_intensity);
         int[] settingsKeycodes = res.getIntArray(R.array.settings_key_keycodes);
         boolean settingsKeyPanel = res.getBoolean(R.bool.settings_key_panel);

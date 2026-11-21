@@ -11,8 +11,9 @@ android {
         applicationId providers.gradleProperty('launcherApplicationId').getOrElse('com.gathin.tvhome')
         minSdk 26
         targetSdk 34
+        // Equal sideload version codes allow restoring the saved APK without uninstalling app data.
         versionCode 8
-        versionName '2.7'
+        versionName '2.8-home.1'
     }
 
     buildTypes {

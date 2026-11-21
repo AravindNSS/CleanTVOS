@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="shelf_favourites">YOUR FAVOURITES</string>
+    <string name="shortcut_fire_tv" translatable="false">Fire TV</string>
+</resources>

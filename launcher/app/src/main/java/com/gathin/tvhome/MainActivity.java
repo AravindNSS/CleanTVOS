@@ -51,7 +51,6 @@ import android.text.SpannableString;
 import android.text.Spanned;
 import android.text.TextPaint;
 import android.text.TextUtils;
-import android.text.style.ForegroundColorSpan;
 import android.util.TypedValue;
 import android.view.Gravity;
 import android.view.KeyEvent;
@@ -137,7 +136,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private GlassView glass;
     private View ambient;
     private TextView heroName;
-    /** The top shelf: heroName, plus the cinematic shelf's "Last opened" line and dock position dots. */
+    /** The top shelf: heroName, plus the cinematic shelf's action label and dock position dots. */
     private View hero;
     private TextView heroMeta;
     private LinearLayout heroDots;
@@ -153,6 +152,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     /** config.xml cinematic_white_focus: the cinematic shelf keeps the white highlight. */
     private boolean cinematicWhiteFocus;
     private ImageView heroArt;
+    private ImageView heroPoster;
+    private String heroPosterKey;
     /** config.xml cinematic_dots: false leaves the dock position dots out of the cinematic shelf. */
     private boolean heroDotsShown = true;
     /** The artwork's opacity behind the cinematic shelf (config.xml cinematic_art); 0 leaves it out. */
@@ -171,6 +172,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private TextView greeting;
     private View clockBlock;
     private View btnInputs;
+    private View btnFireTv;
+    private String fireTvInput;
     /** config show_inputs_pill: false keeps the Inputs pill hidden even when the TV has inputs. */
     private boolean showInputsPill = true;
     private TextView btnWifi;
@@ -300,6 +303,16 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         public void onInputRemoved(String inputId) {
             updateInputsButton();
         }
+
+        @Override
+        public void onInputUpdated(String inputId) {
+            updateInputsButton();
+        }
+
+        @Override
+        public void onTvInputInfoUpdated(TvInputInfo info) {
+            updateInputsButton();
+        }
     };
     /** Listens for any VPN coming up or going down, even one this app's traffic is excluded from. */
     private final ConnectivityManager.NetworkCallback vpnCallback = new ConnectivityManager.NetworkCallback() {
@@ -320,6 +333,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             // Updates send REMOVED followed by ADDED; keep the tile until the new APK is ready.
             if (Intent.ACTION_PACKAGE_REMOVED.equals(intent.getAction())
                     && intent.getBooleanExtra(Intent.EXTRA_REPLACING, false)) return;
+            BannerArt.clear();
             // In the background this only marks the tiles stale; onResume rebuilds them once.
             if (!tileRefresh.onPackagesChanged()) return;
             reloadApps(false);
@@ -387,6 +401,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
         root = findViewById(R.id.root);
         root.setBackgroundColor(cfg.backgroundColor);
+        if (cfg.cinematicHome && !cfg.hasBackgroundOverride) root.setBackgroundResource(R.drawable.shelf_backdrop);
         // root fills the window with an opaque colour (Config keeps background_color opaque), so the window's own
         // black under it is a second full-screen fill on every frame for nothing. The starting window still uses
         // the theme's background, so launch looks the same.
@@ -411,6 +426,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         heroMeta = findViewById(R.id.heroMeta);
         heroDots = findViewById(R.id.heroDots);
         heroArt = findViewById(R.id.heroArt);
+        heroPoster = findViewById(R.id.heroPoster);
+        heroPoster.setClipToOutline(true);
         cinematic = cfg.cinematicHome;
         glowStyle = cfg.glowStyle;
         heroDotsShown = cfg.cinematicDots;
@@ -590,6 +607,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
 
         btnInputs = findViewById(R.id.btnInputs);
+        btnFireTv = findViewById(R.id.btnFireTv);
+        btnFireTv.setOnClickListener(v -> {
+            if (fireTvInput != null) openInput(fireTvInput);
+            else showInputs();
+        });
         View btnSettings = findViewById(R.id.btnSettings);
         btnInputs.setOnClickListener(v -> showInputs());
         btnWifi.setOnClickListener(v -> openNetworkPill());
@@ -666,19 +688,21 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                 focusTile(lastFocused % COLUMNS);
                 return true;
             }
-            int firstButton = btnInputs.getVisibility() == View.VISIBLE ? R.id.btnInputs : firstTopButton().getId();
+            int firstButton = btnFireTv.getVisibility() == View.VISIBLE ? R.id.btnFireTv
+                    : btnInputs.getVisibility() == View.VISIBLE ? R.id.btnInputs : firstTopButton().getId();
             int leftButton = rtlMenuBar ? R.id.btnSettings : firstButton;
             int rightButton = rtlMenuBar ? firstButton : R.id.btnSettings;
             if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return v.getId() == leftButton;
             return keyCode == KeyEvent.KEYCODE_DPAD_RIGHT && v.getId() == rightButton;
         };
         btnInputs.setOnKeyListener(pillKeys);
+        btnFireTv.setOnKeyListener(pillKeys);
         btnWifi.setOnKeyListener(pillKeys);
         btnSettings.setOnKeyListener(pillKeys);
         btnReorder.setOnKeyListener(pillKeys);
         btnLibraryTop.setOnKeyListener(pillKeys);
         if (advancedEffects) {
-            for (View button : new View[]{btnInputs, btnWifi, btnReorder, btnLibraryTop, btnSettings}) {
+            for (View button : new View[]{btnFireTv, btnInputs, btnWifi, btnReorder, btnLibraryTop, btnSettings}) {
                 button.setOnFocusChangeListener((view, focused) -> view.animate()
                         .scaleX(focused ? 1.04f : 1f).scaleY(focused ? 1.04f : 1f)
                         .setDuration(reducedMotion ? Motion.REDUCED_MS : 160).start());
@@ -928,6 +952,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             ambient.setAlpha(0f);
             heroArt.animate().cancel();
             heroArt.setAlpha(0f);
+            heroPoster.setVisibility(View.INVISIBLE);
         }
         if (rebuild) reloadTiles();
         if (animate && entrance && animations && !reducedMotion) {
@@ -956,7 +981,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     /** True when PackageManager reports apps changed since the last rebuild (one binder call). */
     private boolean packagesChangedSinceRebuild() {
         ChangedPackages changed = getPackageManager().getChangedPackages(packageSequence);
-        return changed != null && !changed.getPackageNames().isEmpty();
+        boolean different = changed != null && !changed.getPackageNames().isEmpty();
+        if (different && packageSequence != 0) BannerArt.clear();
+        return different;
     }
 
     private int currentPackageSequence(int since) {
@@ -978,6 +1005,8 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // An updated app may bring new artwork; the backdrop is cheap to make again.
         heroArtCache.clear();
         heroArtKey = null;
+        heroPoster.setImageDrawable(null);
+        heroPosterKey = null;
         // One LEANBACK query for both the tiles and the card checks.
         final List<ResolveInfo> leanback = getPackageManager().queryIntentActivities(
                 new Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LEANBACK_LAUNCHER), 0);
@@ -1067,8 +1096,11 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         // they hold) would stay attached until Home comes back. setAdapter(null) recycles them now.
         grid.setAdapter(null);
         grid.getRecycledViewPool().clear();
+        BannerArt.clear();
         heroArtCache.clear();
         heroArtKey = null;
+        heroPoster.setImageDrawable(null);
+        heroPosterKey = null;
         tileRefresh.invalidate();
     }
 
@@ -1579,9 +1611,30 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     private void showHero(int position, float dockTopInRoot) {
         String label = adapter.labelAt(position);
         int color = adapter.ambientColorAt(position);
-        float y = dockTopInRoot - 14 * density - 26 * density - hero.getHeight();
+        float y = dockTopInRoot - (cinematic ? 30 : 40) * density - hero.getHeight();
         boolean changed = !label.contentEquals(heroName.getText());
         if (cinematic && heroArtAlpha > 0f) showHeroArt(position);
+        if (cinematic && hero.getVisibility() != View.GONE) {
+            String key = adapter.keyAt(position);
+            if (key != null && !key.equals(heroPosterKey)) {
+                Drawable art = adapter.artworkAt(position);
+                // Separate bounds, shared bitmap pixels: the poster must never mutate the tile's drawable.
+                heroPoster.setImageDrawable(art != null && art.getConstantState() != null
+                        ? art.getConstantState().newDrawable(getResources()).mutate() : null);
+                heroPosterKey = key;
+            }
+            // Fit between the grid viewport top (below the header) and the dock, even in dense themes.
+            revealRect.setEmpty();
+            root.offsetDescendantRectToMyCoords(grid, revealRect);
+            float bottom = dockTopInRoot - 24 * density;
+            int height = heroPoster.getHeight();
+            float scale = height == 0 ? 0f : Math.max(0f, Math.min(1f, (bottom - revealRect.top) / height));
+            heroPoster.setPivotY(height);
+            heroPoster.setScaleX(scale);
+            heroPoster.setScaleY(scale);
+            heroPoster.setY(bottom - height);
+            heroPoster.setVisibility(heroPoster.getDrawable() == null ? View.INVISIBLE : View.VISIBLE);
+        }
 
         if (!animations || reducedMotion) {
             // Snap the shelf instead of sliding and fading it: each of those frames repaints the
@@ -1634,7 +1687,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         }
     }
 
-    /** The shelf's text for this dock app: its name and, on the cinematic shelf, "Last opened" and the dots. */
+    /** The shelf's text for this dock app: its name and, on the cinematic shelf, the action label and position dots. */
     private void fillHero(int position, String label) {
         heroName.setText(label);
         if (!cinematic) return;
@@ -1649,8 +1702,10 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * scrimPercent of its strength (cinematic_scrim). cinematic_art 0 leaves the artwork out, 0 percent the scrim.
      */
     private void setUpCinematicShelf(int scrimPercent) {
-        heroName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 68f);
+        heroName.setTextSize(TypedValue.COMPLEX_UNIT_SP, 38f);
+        heroName.setMaxWidth(Math.round(getResources().getDisplayMetrics().widthPixels - 410 * density));
         heroName.setLetterSpacing(-0.025f);
+        findViewById(R.id.heroKicker).setVisibility(View.VISIBLE);
         heroMeta.setVisibility(View.INVISIBLE);   // keeps its height, so the name does not jump when it fills in
         heroDots.setVisibility(heroDotsShown ? View.VISIBLE : View.GONE);
         heroArt.setVisibility(heroArtAlpha > 0f ? View.VISIBLE : View.GONE);
@@ -1719,19 +1774,9 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
         else heroArt.animate().alpha(heroArtAlpha).setDuration(reducedMotion ? Math.min(ms, Motion.REDUCED_MS) : ms).start();
     }
 
-    /** "Last opened yesterday, 9:40 PM", the time in white; nothing (but the same height) when it was never seen. */
+    /** A stable action hint avoids history reads and writes on the app-launch path. */
     private void updateHeroMeta(int position) {
-        long when = LastOpened.get(this, adapter.packageAt(position));
-        if (when <= 0) {
-            heroMeta.setVisibility(View.INVISIBLE);
-            return;
-        }
-        String rel = LastOpened.describe(this, when);
-        String text = getString(R.string.last_opened, rel);
-        SpannableString line = new SpannableString(text);
-        int at = text.indexOf(rel);
-        if (at >= 0) line.setSpan(new ForegroundColorSpan(0xFFFFFFFF), at, at + rel.length(), Spanned.SPAN_EXCLUSIVE_EXCLUSIVE);
-        heroMeta.setText(line);
+        heroMeta.setText(R.string.library_open);
         heroMeta.setVisibility(View.VISIBLE);
     }
 
@@ -1847,6 +1892,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
      * name above the dock does not show (every grid tile has its name underneath).
      */
     private void showGlowOnly(int position) {
+        heroPoster.setVisibility(View.INVISIBLE);
         int color = adapter.ambientColorAt(position);
         stopAmbientAnimation();
         hero.animate().cancel();
@@ -1873,6 +1919,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     }
 
     private void hideHero() {
+        heroPoster.setVisibility(View.INVISIBLE);
         if (!heroShown) return;
         stopAmbientAnimation();
         hero.animate().cancel();
@@ -2132,6 +2179,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
 
     /** The first top-bar button after Inputs that is shown: the network pill, Reorder, then Settings (always there). */
     private View firstTopButton() {
+        if (btnFireTv.getVisibility() == View.VISIBLE) return btnFireTv;
         if (btnWifi.getVisibility() == View.VISIBLE) return btnWifi;
         if (btnReorder.getVisibility() == View.VISIBLE) return btnReorder;
         return findViewById(R.id.btnSettings);
@@ -2548,9 +2596,12 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
     /** Hides the Inputs pill when it would have nothing to list: streaming boxes have no HDMI-in, AV or tuner. */
     private void updateInputsButton() {
         if (!showInputsPill) {
+            fireTvInput = null;
+            btnFireTv.setVisibility(View.GONE);
             btnInputs.setVisibility(View.GONE);
             return;
         }
+        updateFireTvShortcut();
         boolean any = liveTvIntent() != null || !sourcePanelService.isEmpty()
                 || (coocaaSources && !CoocaaSources.list(this).isEmpty());
         TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
@@ -2564,6 +2615,40 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             }
         }
         btnInputs.setVisibility(any ? View.VISIBLE : View.GONE);
+    }
+
+    private boolean selectableInput(TvInputInfo info, List<TvInputInfo> inputs) {
+        if (!info.isPassthroughInput() || info.isHidden(this)
+                || Integer.valueOf(-1).equals(mappedSource(info.getId()))) return false;
+        String parent = info.getParentId();
+        if (parent == null) return true;
+        if (Integer.valueOf(-1).equals(mappedSource(parent))) return false;
+        for (TvInputInfo port : inputs) {
+            if (parent.equals(port.getId())) return !port.isHidden(this);
+        }
+        // Some firmwares expose a CEC child without registering the physical port.
+        return true;
+    }
+
+    /** Follow a named Fire TV input, including after HDMI registration changes at boot. */
+    private void updateFireTvShortcut() {
+        fireTvInput = null;
+        TvInputManager tim = (TvInputManager) getSystemService(TV_INPUT_SERVICE);
+        if (cinematic && tim != null) {
+            try {
+                List<TvInputInfo> inputs = tim.getTvInputList();
+                for (TvInputInfo info : inputs) {
+                    if (info.getType() == TvInputInfo.TYPE_HDMI && selectableInput(info, inputs)
+                            && InputShortcut.isFireTv(info.loadCustomLabel(this), info.loadLabel(this))) {
+                        fireTvInput = info.getId();
+                        break;
+                    }
+                }
+            } catch (RuntimeException ignored) {
+                // Vendor services can disappear during startup; the callback will retry registration.
+            }
+        }
+        btnFireTv.setVisibility(fireTvInput == null ? View.GONE : View.VISIBLE);
     }
 
     /** boot_to_live_tv: the first time Home comes up after the TV starts, open the Live TV app instead. Once per
@@ -2731,7 +2816,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
             for (TvInputInfo info : inputs) {
                 String parent = info.getParentId();
                 if (parent == null || !inputIds.contains(parent)) continue;
-                if (!info.isPassthroughInput() || info.isHidden(this)) continue;
+                if (!selectableInput(info, inputs)) continue;
                 List<TvInputInfo> onPort = cecDevices.get(parent);
                 if (onPort == null) cecDevices.put(parent, onPort = new ArrayList<>());
                 onPort.add(info);
@@ -2769,9 +2854,7 @@ public class MainActivity extends Activity implements AppAdapter.TileListener {
                     }
                 }
                 // Inputs hidden in the TV's Settings > Inputs stay out of the menu too.
-                if (!info.isPassthroughInput() || info.isHidden(this)) continue;
-                // input_sources can leave out ports the board reports but the set does not have ("HW8=-").
-                if (Integer.valueOf(-1).equals(mappedSource(info.getId()))) continue;
+                if (!selectableInput(info, inputs)) continue;
                 // A CEC device's row is added with its port, below.
                 if (info.getParentId() != null && inputIds.contains(info.getParentId())) continue;
                 CharSequence l = info.loadLabel(this);

@@ -180,8 +180,6 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     private final boolean dockRow;
     /** config always_show_names: the alpha of an unfocused tile's name (0 hides it). */
     private final float restNameAlpha;
-    /** cinematic_home: only then does a launch record the last-opened app the shelf uses. */
-    private final boolean cinematic;
     /** Dock order (config.xml dock_apps, or a theme's config.json). */
     private final List<String> favourites;
     /** Grid apps fill the dock slots dock_apps leaves free (config.xml, fill_dock). */
@@ -228,7 +226,6 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         this.dockTitle = cfg.dockTitle;
         this.dockRow = cfg.dockRow;
         this.restNameAlpha = cfg.alwaysShowNames ? 0.75f : 0f;
-        this.cinematic = cfg.cinematicHome;
         this.launchActions = cfg.launchActions;
         this.tileMenu = cfg.tileMenu;
         this.appLabels = cfg.appLabels;
@@ -336,19 +333,15 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
     private Drawable loadBanner(PackageManager pm, ResolveInfo ri) {
         int id = ri.activityInfo.banner;
         if (id == 0) id = ri.activityInfo.applicationInfo.banner;
-        Drawable banner = null;
-        if (id != 0) {
-            try {
-                Resources resources = pm.getResourcesForApplication(ri.activityInfo.applicationInfo);
-                // Keep at least xhdpi detail rather than downsampling artwork before the focus zoom.
-                int density = Math.max(DisplayMetrics.DENSITY_XHIGH, ctx.getResources().getDisplayMetrics().densityDpi);
-                banner = resources.getDrawableForDensity(id, density, null);
-            } catch (PackageManager.NameNotFoundException | Resources.NotFoundException ignored) {
-            }
+        if (id == 0) return null;
+        try {
+            Resources resources = pm.getResourcesForApplication(ri.activityInfo.applicationInfo);
+            DisplayMetrics metrics = ctx.getResources().getDisplayMetrics();
+            return BannerArt.load(resources, id, Math.round(240 * metrics.density),
+                    ri.activityInfo.applicationInfo.sourceDir);
+        } catch (PackageManager.NameNotFoundException | Resources.NotFoundException ignored) {
+            return null;
         }
-        if (banner == null) banner = ri.activityInfo.loadBanner(pm);
-        // A square "banner" counts as none: the tile shows the app's icon and name instead of a blur.
-        return banner != null && isBannerShaped(banner.getIntrinsicWidth(), banner.getIntrinsicHeight()) ? banner : null;
     }
 
     /**
@@ -489,7 +482,6 @@ public class AppAdapter extends RecyclerView.Adapter<RecyclerView.ViewHolder> {
         }
         try {
             ctx.startActivity(i);
-            if (cinematic) LastOpened.record(ctx, e.pkg);
             if (advancedEffects && !reducedMotion && ctx instanceof Activity) {
                 ((Activity) ctx).overridePendingTransition(R.anim.app_open_enter, R.anim.app_open_exit);
             }

@@ -63,4 +63,5 @@
         <item quantity="other">%1$d 个应用</item>
     </plurals>
     <string name="greeting_with_name">%1$s，%2$s</string>
+    <string name="shelf_favourites">收藏</string>
 </resources>
